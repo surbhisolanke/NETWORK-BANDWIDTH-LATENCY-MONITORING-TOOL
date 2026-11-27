@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
+import speedtest
 
 
 # ==========================================================
@@ -62,6 +63,33 @@ def save_reading(target, reading_no, latency):
     conn.close()
 
 
+def save_bandwidth(measurement_type, speed_mbps):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bandwidth_readings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            measurement_type TEXT,
+            speed_mbps REAL
+        )
+    """)
+
+    cursor.execute("""
+        INSERT INTO bandwidth_readings
+        (timestamp, measurement_type, speed_mbps)
+        VALUES (?, ?, ?)
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        measurement_type,
+        speed_mbps
+    ))
+
+    conn.commit()
+    conn.close()
+
+
 # ==========================================================
 # LATENCY MEASUREMENT
 # ==========================================================
@@ -80,6 +108,20 @@ def measure_latency(target):
     )
 
     return [float(value) for value in values]
+
+
+# ==========================================================
+# BANDWIDTH MEASUREMENT
+# ==========================================================
+
+def measure_bandwidth():
+    tester = speedtest.Speedtest()
+    tester.get_best_server()
+
+    download_mbps = tester.download() / 1_000_000
+    upload_mbps = tester.upload() / 1_000_000
+
+    return download_mbps, upload_mbps
 
 
 # ==========================================================
@@ -167,18 +209,17 @@ if selected_module == "🏠 Dashboard":
     with c2:
         st.subheader("⬇️ Download")
         st.write("Download bandwidth measurement.")
-        st.info("○ NEXT MILESTONE")
+        st.success("✓ IMPLEMENTED")
 
     with c3:
         st.subheader("⬆️ Upload")
         st.write("Upload bandwidth measurement.")
-        st.info("○ NEXT MILESTONE")
+        st.success("✓ IMPLEMENTED")
 
     st.divider()
 
-    st.info(
-        "Latency Measurement is currently implemented. "
-        "Other modules are planned for upcoming milestones."
+    st.success(
+        "Latency, Download Bandwidth and Upload Bandwidth are implemented."
     )
 
 
@@ -428,7 +469,6 @@ elif selected_module == "⚡ Latency Measurement":
 
         else:
 
-            # Only the latest 5 readings are compared.
             average_8888 = sum(readings_8888) / 5
             average_1111 = sum(readings_1111) / 5
 
@@ -529,12 +569,38 @@ elif selected_module == "⚡ Latency Measurement":
 elif selected_module == "⬇️ Download Bandwidth":
 
     st.title("⬇️ Download Bandwidth")
-    st.caption("Download bandwidth measurement module.")
+    st.caption("Measure your internet download speed.")
 
-    st.info(
-        "Not implemented yet. "
-        "This module will be added in the bandwidth measurement milestone."
-    )
+    st.divider()
+
+    if st.button(
+        "⬇️ START DOWNLOAD TEST",
+        type="primary",
+        use_container_width=True
+    ):
+        try:
+            with st.spinner("Measuring download speed..."):
+                download_mbps, upload_mbps = measure_bandwidth()
+
+            st.session_state.download_speed = download_mbps
+            save_bandwidth("Download", download_mbps)
+
+            st.success("Download test completed successfully.")
+
+        except Exception as error:
+            st.error(f"Download test failed: {error}")
+
+    if "download_speed" in st.session_state:
+        st.subheader("📊 Download Speed")
+
+        st.metric(
+            "Download Speed",
+            f"{st.session_state.download_speed:.2f} Mbps"
+        )
+
+        st.info(
+            "The measured download speed has been saved in the SQLite database."
+        )
 
 
 # ==========================================================
@@ -544,12 +610,38 @@ elif selected_module == "⬇️ Download Bandwidth":
 elif selected_module == "⬆️ Upload Bandwidth":
 
     st.title("⬆️ Upload Bandwidth")
-    st.caption("Upload bandwidth measurement module.")
+    st.caption("Measure your internet upload speed.")
 
-    st.info(
-        "Not implemented yet. "
-        "This module will be added in the bandwidth measurement milestone."
-    )
+    st.divider()
+
+    if st.button(
+        "⬆️ START UPLOAD TEST",
+        type="primary",
+        use_container_width=True
+    ):
+        try:
+            with st.spinner("Measuring upload speed..."):
+                download_mbps, upload_mbps = measure_bandwidth()
+
+            st.session_state.upload_speed = upload_mbps
+            save_bandwidth("Upload", upload_mbps)
+
+            st.success("Upload test completed successfully.")
+
+        except Exception as error:
+            st.error(f"Upload test failed: {error}")
+
+    if "upload_speed" in st.session_state:
+        st.subheader("📊 Upload Speed")
+
+        st.metric(
+            "Upload Speed",
+            f"{st.session_state.upload_speed:.2f} Mbps"
+        )
+
+        st.info(
+            "The measured upload speed has been saved in the SQLite database."
+        )
 
 
 # ==========================================================
