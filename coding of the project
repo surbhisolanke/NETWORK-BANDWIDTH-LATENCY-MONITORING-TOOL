@@ -7,6 +7,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import speedtest
 import os
+import socket
+import time
 
 
 # ==========================================================
@@ -96,28 +98,59 @@ def save_bandwidth(measurement_type, speed_mbps):
 # ==========================================================
 
 def measure_latency(target):
-    result = subprocess.run(
-       if os.name == "nt":
-    ping_command = ["ping", "-n", "5", target]
-else:
-    ping_command = ["ping", "-c", "5", target]
 
-result = subprocess.run(
-    ping_command,
-    capture_output=True,
-    text=True
-)
-        capture_output=True,
-        text=True
-    )
+    # Primary method: Ping
+    if os.name == "nt":
+        ping_command = ["ping", "-n", "5", target]
+    else:
+        ping_command = ["ping", "-c", "5", target]
 
-    values = re.findall(
-        r"time[=<]\s*(\d+)\s*ms",
-        result.stdout,
-        re.IGNORECASE
-    )
+    try:
+        result = subprocess.run(
+            ping_command,
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
 
-    return [float(value) for value in values]
+        values = re.findall(
+            r"time[=<]\s*(\d+(?:\.\d+)?)\s*ms",
+            result.stdout,
+            re.IGNORECASE
+        )
+
+        ping_readings = [float(value) for value in values]
+
+        # If all 5 ping readings are received
+        if len(ping_readings) == 5:
+            return ping_readings
+
+    except Exception:
+        pass
+
+    # Fallback for Streamlit Cloud
+    # Measures connection response time to DNS port 53
+    fallback_readings = []
+
+    for _ in range(5):
+        try:
+            start_time = time.perf_counter()
+
+            with socket.create_connection(
+                (target, 53),
+                timeout=3
+            ):
+                pass
+
+            end_time = time.perf_counter()
+
+            latency = (end_time - start_time) * 1000
+            fallback_readings.append(round(latency, 2))
+
+        except Exception:
+            continue
+
+    return fallback_readings
 
 
 # ==========================================================
