@@ -11,26 +11,12 @@ import socket
 import time
 
 
-# ==========================================================
-# PAGE CONFIGURATION
-# ==========================================================
-
-st.set_page_config(
-    page_title="NetTrackers",
-    page_icon="🌐",
-    layout="wide"
-)
-
-
-# ==========================================================
+# =========================================================
 # DATABASE
-# ==========================================================
-
-DB_NAME = "latency_data.db"
-
+# =========================================================
 
 def create_database():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect("network_data.db")
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -38,37 +24,10 @@ def create_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT,
             target TEXT,
-            reading_no INTEGER,
+            reading_number INTEGER,
             latency_ms REAL
         )
     """)
-
-    conn.commit()
-    conn.close()
-
-
-def save_reading(target, reading_no, latency):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO latency_readings
-        (timestamp, target, reading_no, latency_ms)
-        VALUES (?, ?, ?, ?)
-    """, (
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        target,
-        reading_no,
-        latency
-    ))
-
-    conn.commit()
-    conn.close()
-
-
-def save_bandwidth(measurement_type, speed_mbps):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bandwidth_readings (
@@ -79,6 +38,41 @@ def save_bandwidth(measurement_type, speed_mbps):
         )
     """)
 
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# SAVE LATENCY
+# =========================================================
+
+def save_latency(target, reading_number, latency):
+    conn = sqlite3.connect("network_data.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO latency_readings
+        (timestamp, target, reading_number, latency_ms)
+        VALUES (?, ?, ?, ?)
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        target,
+        reading_number,
+        latency
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# SAVE BANDWIDTH
+# =========================================================
+
+def save_bandwidth(measurement_type, speed):
+    conn = sqlite3.connect("network_data.db")
+    cursor = conn.cursor()
+
     cursor.execute("""
         INSERT INTO bandwidth_readings
         (timestamp, measurement_type, speed_mbps)
@@ -86,20 +80,23 @@ def save_bandwidth(measurement_type, speed_mbps):
     """, (
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         measurement_type,
-        speed_mbps
+        speed
     ))
 
     conn.commit()
     conn.close()
 
 
-# ==========================================================
+# =========================================================
 # LATENCY MEASUREMENT
-# ==========================================================
+# =========================================================
 
 def measure_latency(target):
 
-    # Primary method: Ping
+    # -----------------------------------------------------
+    # PRIMARY METHOD: PING
+    # -----------------------------------------------------
+
     if os.name == "nt":
         ping_command = ["ping", "-n", "5", target]
     else:
@@ -110,7 +107,7 @@ def measure_latency(target):
             ping_command,
             capture_output=True,
             text=True,
-            timeout=15
+            timeout=20
         )
 
         values = re.findall(
@@ -121,611 +118,490 @@ def measure_latency(target):
 
         ping_readings = [float(value) for value in values]
 
-        # If all 5 ping readings are received
-        if len(ping_readings) == 5:
-            return ping_readings
+        # If 5 ping responses are received
+        if len(ping_readings) >= 5:
+            return ping_readings[:5], "Ping"
 
     except Exception:
         pass
 
-    # Fallback for Streamlit Cloud
-    # Measures connection response time to DNS port 53
+
+    # -----------------------------------------------------
+    # CLOUD FALLBACK
+    # -----------------------------------------------------
+    # Used only when Cloud cannot receive ICMP ping replies.
+    # Measures TCP connection response time.
+
     fallback_readings = []
 
     for _ in range(5):
+
         try:
             start_time = time.perf_counter()
 
-            with socket.create_connection(
+            connection = socket.create_connection(
                 (target, 53),
-                timeout=3
-            ):
-                pass
+                timeout=5
+            )
+
+            connection.close()
 
             end_time = time.perf_counter()
 
             latency = (end_time - start_time) * 1000
+
             fallback_readings.append(round(latency, 2))
 
         except Exception:
             continue
 
-    return fallback_readings
+    if len(fallback_readings) > 0:
+        return fallback_readings, "TCP"
+
+    return [], "None"
 
 
-# ==========================================================
+# =========================================================
 # BANDWIDTH MEASUREMENT
-# ==========================================================
+# =========================================================
 
 def measure_bandwidth():
-    tester = speedtest.Speedtest()
-    tester.get_best_server()
 
-    download_mbps = tester.download() / 1_000_000
-    upload_mbps = tester.upload() / 1_000_000
+    st.info("Connecting to speed test server...")
 
-    return download_mbps, upload_mbps
+    try:
+        st_obj = speedtest.Speedtest()
+
+        st_obj.get_best_server()
+
+        download_speed = st_obj.download() / 1_000_000
+        upload_speed = st_obj.upload() / 1_000_000
+
+        return download_speed, upload_speed
+
+    except Exception as e:
+        st.error("Bandwidth measurement failed.")
+        st.error(str(e))
+        return None, None
 
 
-# ==========================================================
-# DATABASE SETUP
-# ==========================================================
+# =========================================================
+# PAGE CONFIG
+# =========================================================
+
+st.set_page_config(
+    page_title="NetTrackers",
+    page_icon="🌐",
+    layout="wide"
+)
 
 create_database()
 
 
-# ==========================================================
-# SESSION STATE
-# ==========================================================
-
-if "readings_8888" not in st.session_state:
-    st.session_state.readings_8888 = []
-
-if "readings_1111" not in st.session_state:
-    st.session_state.readings_1111 = []
-
-
-# ==========================================================
+# =========================================================
 # SIDEBAR
-# ==========================================================
+# =========================================================
 
-with st.sidebar:
-    st.title("🌐 NetTrackers")
-    st.caption("Network Monitoring Tool")
-    st.divider()
+st.sidebar.title("🌐 NetTrackers")
+st.sidebar.write("Network Monitoring Tool")
 
-    selected_module = st.radio(
-        "Select Module",
-        [
-            "🏠 Dashboard",
-            "⚡ Latency Measurement",
-            "⬇️ Download Bandwidth",
-            "⬆️ Upload Bandwidth",
-            "🔄 Continuous Monitoring",
-            "📊 Dashboard & Report"
-        ]
-    )
+st.sidebar.markdown("---")
+
+module = st.sidebar.radio(
+    "Select Module",
+    [
+        "🏠 Dashboard",
+        "⚡ Latency Measurement",
+        "⬇️ Download Bandwidth",
+        "⬆️ Upload Bandwidth",
+        "🔄 Continuous Monitoring",
+        "📊 Dashboard & Report"
+    ]
+)
 
 
-# ==========================================================
+# =========================================================
 # DASHBOARD
-# ==========================================================
+# =========================================================
 
-if selected_module == "🏠 Dashboard":
+if module == "🏠 Dashboard":
 
     st.title("🌐 NetTrackers")
-    st.caption("Network Bandwidth & Latency Monitoring Tool")
+    st.subheader("Network Bandwidth & Latency Monitoring Tool")
 
-    st.divider()
+    st.markdown("---")
 
-    st.subheader("🌐 Network Monitoring")
+    col1, col2, col3 = st.columns(3)
 
-    visual1, visual2, visual3, visual4, visual5 = st.columns(5)
+    with col1:
+        st.metric(
+            "Latency",
+            "IMPLEMENTED"
+        )
 
-    with visual1:
-        st.markdown("### 💻")
-        st.caption("YOUR PC")
+    with col2:
+        st.metric(
+            "Download Bandwidth",
+            "IMPLEMENTED"
+        )
 
-    with visual2:
-        st.markdown("### ➜")
+    with col3:
+        st.metric(
+            "Upload Bandwidth",
+            "IMPLEMENTED"
+        )
 
-    with visual3:
-        st.markdown("### 🌐")
-        st.caption("NETWORK")
+    st.markdown("---")
 
-    with visual4:
-        st.markdown("### ➜")
-
-    with visual5:
-        st.markdown("### 📡")
-        st.caption("TARGET")
-
-    st.divider()
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.subheader("⚡ Latency")
-        st.write("Measure network response time.")
-        st.success("✓ IMPLEMENTED")
-
-    with c2:
-        st.subheader("⬇️ Download")
-        st.write("Download bandwidth measurement.")
-        st.success("✓ IMPLEMENTED")
-
-    with c3:
-        st.subheader("⬆️ Upload")
-        st.write("Upload bandwidth measurement.")
-        st.success("✓ IMPLEMENTED")
-
-    st.divider()
-
-    st.success(
-        "Latency, Download Bandwidth and Upload Bandwidth are implemented."
+    st.info(
+        "The system measures network latency, download bandwidth "
+        "and upload bandwidth and stores the measurement results."
     )
 
 
-# ==========================================================
+# =========================================================
 # LATENCY MEASUREMENT
-# ==========================================================
+# =========================================================
 
-elif selected_module == "⚡ Latency Measurement":
+elif module == "⚡ Latency Measurement":
 
     st.title("⚡ Latency Measurement")
-    st.caption(
-        "Measure network response time using five ping readings."
+
+    st.markdown(
+        "Latency is measured by sending ping requests to selected "
+        "network targets."
     )
 
-    st.divider()
+    col1, col2 = st.columns(2)
 
-    st.subheader("🌐 Live Network Connection")
-
-    visual1, visual2, visual3, visual4, visual5 = st.columns(5)
-
-    with visual1:
-        st.markdown("### 💻")
-        st.caption("YOUR PC")
-
-    with visual2:
-        st.markdown("### ➜")
-
-    with visual3:
-        st.markdown("### 🌐")
-        st.caption("INTERNET")
-
-    with visual4:
-        st.markdown("### ➜")
-
-    with visual5:
-        st.markdown("### 📡")
-        st.caption("TARGET")
-
-    st.divider()
-
-    left, right = st.columns(2)
-
-
-    # ======================================================
-    # 8.8.8.8
-    # ======================================================
-
-    with left:
+    with col1:
 
         st.subheader("🌐 8.8.8.8")
         st.caption("TARGET 01")
 
         if st.button(
             "⚡ MEASURE 8.8.8.8",
-            key="button_8888",
             use_container_width=True
         ):
 
-            with st.spinner(
-                "Taking 5 readings from 8.8.8.8..."
-            ):
-                readings = measure_latency("8.8.8.8")
+            readings, method = measure_latency("8.8.8.8")
 
-            if len(readings) == 5:
+            if readings:
 
-                st.session_state.readings_8888 = readings
+                st.success(
+                    f"Measurement completed using {method}."
+                )
 
-                for number, value in enumerate(
-                    readings,
-                    start=1
-                ):
-                    save_reading(
+                data = []
+
+                for i, value in enumerate(readings, start=1):
+
+                    save_latency(
                         "8.8.8.8",
-                        number,
+                        i,
                         value
                     )
 
-                st.success(
-                    "5 readings measured and saved successfully."
+                    data.append({
+                        "Reading": i,
+                        "Latency (ms)": value
+                    })
+
+                df = pd.DataFrame(data)
+
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True
                 )
+
+                st.metric(
+                    "Average Latency",
+                    f"{df['Latency (ms)'].mean():.2f} ms"
+                )
+
+                st.metric(
+                    "Minimum Latency",
+                    f"{df['Latency (ms)'].min():.2f} ms"
+                )
+
+                st.metric(
+                    "Maximum Latency",
+                    f"{df['Latency (ms)'].max():.2f} ms"
+                )
+
+                if method == "TCP":
+                    st.warning(
+                        "Cloud server did not receive ICMP ping replies, "
+                        "so TCP latency was used as fallback."
+                    )
 
             else:
                 st.error(
-                    "Could not receive all 5 ping responses."
+                    "Could not receive latency responses."
                 )
 
-
-        readings_8888 = st.session_state.readings_8888
-
-        if readings_8888:
-
-            st.markdown("### 📡 Five Readings")
-
-            reading_table_8888 = pd.DataFrame({
-                "Reading": [
-                    f"Reading {i}"
-                    for i in range(1, 6)
-                ],
-                "Latency": [
-                    f"{value:.0f} ms"
-                    for value in readings_8888
-                ]
-            })
-
-            st.table(reading_table_8888)
-
-            average_8888 = sum(
-                readings_8888
-            ) / len(readings_8888)
-
-            m1, m2, m3 = st.columns(3)
-
-            with m1:
-                st.metric(
-                    "Average",
-                    f"{average_8888:.2f} ms"
-                )
-
-            with m2:
-                st.metric(
-                    "Minimum",
-                    f"{min(readings_8888):.0f} ms"
-                )
-
-            with m3:
-                st.metric(
-                    "Maximum",
-                    f"{max(readings_8888):.0f} ms"
-                )
-
-
-    # ======================================================
-    # 1.1.1.1
-    # ======================================================
-
-    with right:
+    with col2:
 
         st.subheader("🌐 1.1.1.1")
         st.caption("TARGET 02")
 
         if st.button(
             "⚡ MEASURE 1.1.1.1",
-            key="button_1111",
             use_container_width=True
         ):
 
-            with st.spinner(
-                "Taking 5 readings from 1.1.1.1..."
-            ):
-                readings = measure_latency("1.1.1.1")
+            readings, method = measure_latency("1.1.1.1")
 
-            if len(readings) == 5:
+            if readings:
 
-                st.session_state.readings_1111 = readings
+                st.success(
+                    f"Measurement completed using {method}."
+                )
 
-                for number, value in enumerate(
-                    readings,
-                    start=1
-                ):
-                    save_reading(
+                data = []
+
+                for i, value in enumerate(readings, start=1):
+
+                    save_latency(
                         "1.1.1.1",
-                        number,
+                        i,
                         value
                     )
 
-                st.success(
-                    "5 readings measured and saved successfully."
+                    data.append({
+                        "Reading": i,
+                        "Latency (ms)": value
+                    })
+
+                df = pd.DataFrame(data)
+
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True
                 )
+
+                st.metric(
+                    "Average Latency",
+                    f"{df['Latency (ms)'].mean():.2f} ms"
+                )
+
+                st.metric(
+                    "Minimum Latency",
+                    f"{df['Latency (ms)'].min():.2f} ms"
+                )
+
+                st.metric(
+                    "Maximum Latency",
+                    f"{df['Latency (ms)'].max():.2f} ms"
+                )
+
+                if method == "TCP":
+                    st.warning(
+                        "Cloud server did not receive ICMP ping replies, "
+                        "so TCP latency was used as fallback."
+                    )
 
             else:
                 st.error(
-                    "Could not receive all 5 ping responses."
+                    "Could not receive latency responses."
                 )
 
-
-        readings_1111 = st.session_state.readings_1111
-
-        if readings_1111:
-
-            st.markdown("### 📡 Five Readings")
-
-            reading_table_1111 = pd.DataFrame({
-                "Reading": [
-                    f"Reading {i}"
-                    for i in range(1, 6)
-                ],
-                "Latency": [
-                    f"{value:.0f} ms"
-                    for value in readings_1111
-                ]
-            })
-
-            st.table(reading_table_1111)
-
-            average_1111 = sum(
-                readings_1111
-            ) / len(readings_1111)
-
-            m1, m2, m3 = st.columns(3)
-
-            with m1:
-                st.metric(
-                    "Average",
-                    f"{average_1111:.2f} ms"
-                )
-
-            with m2:
-                st.metric(
-                    "Minimum",
-                    f"{min(readings_1111):.0f} ms"
-                )
-
-            with m3:
-                st.metric(
-                    "Maximum",
-                    f"{max(readings_1111):.0f} ms"
-                )
-
-
-    # ======================================================
-    # COMPARISON
-    # ======================================================
-
-    st.divider()
+    st.markdown("---")
 
     if st.button(
         "⚡ COMPARE BOTH TARGETS",
-        key="compare_targets",
-        type="primary",
         use_container_width=True
     ):
 
-        readings_8888 = st.session_state.readings_8888
-        readings_1111 = st.session_state.readings_1111
+        conn = sqlite3.connect("network_data.db")
 
-        if len(readings_8888) != 5:
+        df = pd.read_sql_query(
+            """
+            SELECT target, latency_ms
+            FROM latency_readings
+            """,
+            conn
+        )
 
-            st.warning(
-                "Please measure 8.8.8.8 first."
+        conn.close()
+
+        if not df.empty:
+
+            comparison = (
+                df.groupby("target")["latency_ms"]
+                .mean()
+                .reset_index()
             )
 
-        elif len(readings_1111) != 5:
+            st.subheader("Latency Comparison")
 
-            st.warning(
-                "Please measure 1.1.1.1 first."
+            st.dataframe(
+                comparison,
+                use_container_width=True,
+                hide_index=True
             )
 
-        else:
+            fig, ax = plt.subplots()
 
-            average_8888 = sum(readings_8888) / 5
-            average_1111 = sum(readings_1111) / 5
-
-            st.subheader("📊 Latency Comparison")
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                st.metric(
-                    "🌐 8.8.8.8 Average",
-                    f"{average_8888:.2f} ms"
-                )
-
-            with c2:
-                st.metric(
-                    "🌐 1.1.1.1 Average",
-                    f"{average_1111:.2f} ms"
-                )
-
-            graph_data = pd.DataFrame({
-                "Target": [
-                    "8.8.8.8",
-                    "1.1.1.1"
-                ],
-                "Average Latency": [
-                    average_8888,
-                    average_1111
-                ]
-            })
-
-            fig, ax = plt.subplots(
-                figsize=(9, 4.5)
-            )
-
-            bars = ax.bar(
-                graph_data["Target"],
-                graph_data["Average Latency"]
-            )
-
-            ax.set_title(
-                "Average Latency Comparison",
-                fontsize=14,
-                fontweight="bold"
+            ax.bar(
+                comparison["target"],
+                comparison["latency_ms"]
             )
 
             ax.set_xlabel("Target")
             ax.set_ylabel("Average Latency (ms)")
-            ax.grid(
-                axis="y",
-                alpha=0.25
+            ax.set_title("Average Latency Comparison")
+
+            st.pyplot(fig)
+
+            lowest = comparison.loc[
+                comparison["latency_ms"].idxmin()
+            ]
+
+            st.success(
+                f"Lower average latency: {lowest['target']} "
+                f"({lowest['latency_ms']:.2f} ms)"
             )
 
-            for bar, value in zip(
-                bars,
-                graph_data["Average Latency"]
-            ):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height(),
-                    f"{value:.2f} ms",
-                    ha="center",
-                    va="bottom",
-                    fontweight="bold"
-                )
-
-            st.pyplot(
-                fig,
-                use_container_width=True
+        else:
+            st.warning(
+                "Please measure both targets first."
             )
 
-            if average_8888 < average_1111:
 
-                st.success(
-                    f"8.8.8.8 has lower average latency "
-                    f"({average_8888:.2f} ms) than "
-                    f"1.1.1.1 ({average_1111:.2f} ms)."
-                )
-
-            elif average_1111 < average_8888:
-
-                st.success(
-                    f"1.1.1.1 has lower average latency "
-                    f"({average_1111:.2f} ms) than "
-                    f"8.8.8.8 ({average_8888:.2f} ms)."
-                )
-
-            else:
-
-                st.info(
-                    "Both targets have the same average latency."
-                )
-
-
-# ==========================================================
+# =========================================================
 # DOWNLOAD BANDWIDTH
-# ==========================================================
+# =========================================================
 
-elif selected_module == "⬇️ Download Bandwidth":
+elif module == "⬇️ Download Bandwidth":
 
     st.title("⬇️ Download Bandwidth")
-    st.caption("Measure your internet download speed.")
 
-    st.divider()
+    st.write(
+        "Measures the internet download speed of the network."
+    )
 
     if st.button(
-        "⬇️ START DOWNLOAD TEST",
-        type="primary",
+        "⬇️ MEASURE DOWNLOAD SPEED",
         use_container_width=True
     ):
+
+        st.info("Running download speed test...")
+
         try:
-            with st.spinner("Measuring download speed..."):
-                download_mbps, upload_mbps = measure_bandwidth()
 
-            st.session_state.download_speed = download_mbps
-            save_bandwidth("Download", download_mbps)
+            st_obj = speedtest.Speedtest()
+            st_obj.get_best_server()
 
-            st.success("Download test completed successfully.")
+            download_speed = (
+                st_obj.download() / 1_000_000
+            )
 
-        except Exception as error:
-            st.error(f"Download test failed: {error}")
+            save_bandwidth(
+                "Download",
+                download_speed
+            )
 
-    if "download_speed" in st.session_state:
-        st.subheader("📊 Download Speed")
+            st.success("Download measurement completed.")
 
-        st.metric(
-            "Download Speed",
-            f"{st.session_state.download_speed:.2f} Mbps"
-        )
+            st.metric(
+                "Download Speed",
+                f"{download_speed:.2f} Mbps"
+            )
 
-        st.info(
-            "The measured download speed has been saved in the SQLite database."
-        )
+        except Exception as e:
+
+            st.error(
+                "Download measurement failed."
+            )
+
+            st.error(str(e))
 
 
-# ==========================================================
+# =========================================================
 # UPLOAD BANDWIDTH
-# ==========================================================
+# =========================================================
 
-elif selected_module == "⬆️ Upload Bandwidth":
+elif module == "⬆️ Upload Bandwidth":
 
     st.title("⬆️ Upload Bandwidth")
-    st.caption("Measure your internet upload speed.")
 
-    st.divider()
+    st.write(
+        "Measures the internet upload speed of the network."
+    )
 
     if st.button(
-        "⬆️ START UPLOAD TEST",
-        type="primary",
+        "⬆️ MEASURE UPLOAD SPEED",
         use_container_width=True
     ):
+
+        st.info("Running upload speed test...")
+
         try:
-            with st.spinner("Measuring upload speed..."):
-                download_mbps, upload_mbps = measure_bandwidth()
 
-            st.session_state.upload_speed = upload_mbps
-            save_bandwidth("Upload", upload_mbps)
+            st_obj = speedtest.Speedtest()
+            st_obj.get_best_server()
 
-            st.success("Upload test completed successfully.")
+            upload_speed = (
+                st_obj.upload() / 1_000_000
+            )
 
-        except Exception as error:
-            st.error(f"Upload test failed: {error}")
+            save_bandwidth(
+                "Upload",
+                upload_speed
+            )
 
-    if "upload_speed" in st.session_state:
-        st.subheader("📊 Upload Speed")
+            st.success("Upload measurement completed.")
 
-        st.metric(
-            "Upload Speed",
-            f"{st.session_state.upload_speed:.2f} Mbps"
-        )
+            st.metric(
+                "Upload Speed",
+                f"{upload_speed:.2f} Mbps"
+            )
 
-        st.info(
-            "The measured upload speed has been saved in the SQLite database."
-        )
+        except Exception as e:
+
+            st.error(
+                "Upload measurement failed."
+            )
+
+            st.error(str(e))
 
 
-# ==========================================================
+# =========================================================
 # CONTINUOUS MONITORING
-# ==========================================================
+# =========================================================
 
-elif selected_module == "🔄 Continuous Monitoring":
+elif module == "🔄 Continuous Monitoring":
 
     st.title("🔄 Continuous Monitoring")
-    st.caption(
-        "Periodic network monitoring and data collection."
-    )
 
     st.info(
-        "Not implemented yet. "
-        "This module will be added in the continuous monitoring milestone."
+        "Continuous monitoring module will be implemented "
+        "in the continuous monitoring milestone."
     )
 
 
-# ==========================================================
+# =========================================================
 # DASHBOARD & REPORT
-# ==========================================================
+# =========================================================
 
-elif selected_module == "📊 Dashboard & Report":
+elif module == "📊 Dashboard & Report":
 
     st.title("📊 Dashboard & Report")
-    st.caption(
-        "Network trends, reports and visualization."
-    )
 
     st.info(
-        "Not implemented yet. "
-        "This module will be added in the dashboard and reporting milestone."
+        "Dashboard history and report generation module "
+        "will be implemented in the dashboard and reporting milestone."
     )
 
 
-# ==========================================================
+# =========================================================
 # FOOTER
-# ==========================================================
+# =========================================================
 
-st.divider()
+st.markdown("---")
 
 st.caption(
     "NETTRACKERS • NETWORK BANDWIDTH & LATENCY MONITORING TOOL"
