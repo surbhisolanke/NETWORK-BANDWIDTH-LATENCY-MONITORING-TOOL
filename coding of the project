@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import speedtest
+import os
 
 
 # ==========================================================
@@ -96,7 +97,16 @@ def save_bandwidth(measurement_type, speed_mbps):
 
 def measure_latency(target):
     result = subprocess.run(
-        ["ping", "-n", "5", target],
+       if os.name == "nt":
+    ping_command = ["ping", "-n", "5", target]
+else:
+    ping_command = ["ping", "-c", "5", target]
+
+result = subprocess.run(
+    ping_command,
+    capture_output=True,
+    text=True
+)
         capture_output=True,
         text=True
     )
