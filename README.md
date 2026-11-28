@@ -1,5 +1,9 @@
 # NETWORK-BANDWIDTH-LATENCY-MONITORING-TOOL
 
+## Live Demo
+[click here to Open NetTrackers Dashboard]
+(https://network-bandwidth-latency-monitoring-tool-3yzeq89ckjnnhpohuusg.streamlit.app/)
+
 📌 Project Overview
 
 NetTrackers is a Python-based network monitoring project designed to measure and display network performance through a simple dashboard. The project measures network latency, download bandwidth, and upload bandwidth and stores the measurement results for further analysis.
